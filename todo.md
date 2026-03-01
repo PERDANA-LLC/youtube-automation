@@ -1,0 +1,21 @@
+# YouTube Automation Studio - TODO
+
+- [x] Design system: dark blue gradient theme, animations, shadcn/ui
+- [x] Database schema: niches, videos, scripts, thumbnails, voiceovers, calendar, analytics, revenue
+- [x] Backend API routes with tRPC procedures
+- [x] Dashboard layout with sidebar navigation and home infographic button
+- [x] Feature 1: AI-powered profitable niche finder (10+ categories, CPM analysis)
+- [x] Feature 2: Automated content research engine (trending topics, Reddit, news)
+- [x] Feature 3: AI script writer (hooks, storytelling, SEO keywords, CTAs)
+- [x] Feature 4: Text-to-speech voiceover generation (multiple voices)
+- [x] Feature 5: AI thumbnail generator (text overlays, brand consistency)
+- [x] Feature 6: SEO optimizer (titles, descriptions, tags, metadata)
+- [x] Feature 7: Content calendar and scheduling system
+- [x] Feature 8: Pipeline dashboard (idea → script → voiceover → thumbnail → scheduled)
+- [x] Feature 9: Gmail notifications for pipeline milestones
+- [x] Feature 10: YouTube channel setup guide
+- [x] Feature 11: Google Calendar sync for upload schedule
+- [x] Feature 12: Analytics dashboard (CPM, retention, revenue projections)
+- [x] Feature 13: Revenue tracking with Stripe integration
+- [x] Audit logging for all pipeline activities
+- [x] Vitest tests for backend procedures (30 tests passing)
