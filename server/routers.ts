@@ -441,13 +441,17 @@ export const appRouter = router({
         return { url: result.url };
       }),
 
-    // Voiceover Generator (TTS)
+    // Voiceover Generator (TTS) using sherpa-onnx local engine
     generateVoiceover: protectedProcedure
       .input(z.object({
         videoId: z.number(),
         voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).default("alloy"),
       }))
       .mutation(async ({ ctx, input }) => {
+        const { execSync } = await import("child_process");
+        const fs = await import("fs");
+        const path = await import("path");
+
         // 1. Fetch the video to get its script
         const video = await db.getVideoById(input.videoId, ctx.user.id);
         if (!video || !video.scriptContent) {
@@ -456,48 +460,83 @@ export const appRouter = router({
 
         const scriptText = video.scriptContent;
 
-        // 2. Call the TTS API (OpenAI-compatible endpoint via Forge)
-        const baseUrl = process.env.BUILT_IN_FORGE_API_URL?.replace(/\/+$/, "") ?? "";
-        const apiKey = process.env.BUILT_IN_FORGE_API_KEY ?? "";
+        // 2. Map voice names to sherpa-onnx length-scale (larger = slower, smaller = faster)
+        const voiceLengthScaleMap: Record<string, number> = {
+          alloy: 1.0,
+          echo: 1.1,    // Slightly slower for warm, deep tone
+          fable: 0.95,  // Slightly faster for expressive tone
+          onyx: 1.15,   // Slower for deep, authoritative tone
+          nova: 0.9,    // Faster for friendly, warm tone
+          shimmer: 0.85, // Fastest for clear, bright tone
+        };
+        const lengthScale = voiceLengthScaleMap[input.voice] ?? 1.0;
 
-        if (!baseUrl || !apiKey) {
-          throw new Error("TTS service not configured");
-        }
+        // 3. Generate audio using sherpa-onnx local TTS
+        const SHERPA_EXE = "/home/ubuntu/tools/sherpa-onnx-tts/runtime/bin/sherpa-onnx-offline-tts";
+        const MODEL_DIR = "/home/ubuntu/tools/sherpa-onnx-tts/models/vits-piper-en_US-lessac-high";
+        const tmpDir = "/tmp/tts-output";
+        fs.mkdirSync(tmpDir, { recursive: true });
 
-        const ttsResponse = await fetch(`${baseUrl}/v1/audio/speech`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "tts-1",
-            input: scriptText.slice(0, 4096), // TTS has input limit
-            voice: input.voice,
-            response_format: "mp3",
-          }),
-        });
-
-        if (!ttsResponse.ok) {
-          const errText = await ttsResponse.text().catch(() => "");
-          throw new Error(`TTS generation failed: ${ttsResponse.status} ${errText}`);
-        }
-
-        // 3. Upload the audio to S3
-        const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
-        const { storagePut } = await import("./storage");
         const { nanoid } = await import("nanoid");
-        const fileKey = `voiceovers/${ctx.user.id}/${input.videoId}-${nanoid(8)}.mp3`;
-        const { url: audioUrl } = await storagePut(fileKey, audioBuffer, "audio/mpeg");
+        const outputFile = path.join(tmpDir, `vo-${nanoid(8)}.wav`);
 
-        // 4. Update the video record
+        // Clean the script text for shell safety
+        const cleanText = scriptText
+          .slice(0, 5000)
+          .replace(/["\\`$]/g, '')
+          .replace(/\n/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        // Write text to a temp file to avoid shell escaping issues
+        const textFile = path.join(tmpDir, `text-${nanoid(8)}.txt`);
+        fs.writeFileSync(textFile, cleanText);
+
+        try {
+          const cmd = [
+            `LD_LIBRARY_PATH=/home/ubuntu/tools/sherpa-onnx-tts/runtime/lib`,
+            SHERPA_EXE,
+            `--vits-model="${MODEL_DIR}/en_US-lessac-high.onnx"`,
+            `--vits-tokens="${MODEL_DIR}/tokens.txt"`,
+            `--vits-data-dir="${MODEL_DIR}/espeak-ng-data"`,
+            `--vits-length-scale=${lengthScale}`,
+            `--output-filename="${outputFile}"`,
+            `"$(cat ${textFile})"`,
+          ].join(' ');
+
+          execSync(cmd, {
+            timeout: 120000, // 2 min timeout
+            stdio: 'pipe',
+            shell: '/bin/bash',
+          });
+        } catch (err: any) {
+          throw new Error(`TTS generation failed: ${err.message}`);
+        } finally {
+          // Clean up text file
+          try { fs.unlinkSync(textFile); } catch {}
+        }
+
+        if (!fs.existsSync(outputFile)) {
+          throw new Error("TTS generation produced no output file");
+        }
+
+        // 4. Read the WAV file and upload to S3
+        const audioBuffer = fs.readFileSync(outputFile);
+        const { storagePut } = await import("./storage");
+        const fileKey = `voiceovers/${ctx.user.id}/${input.videoId}-${nanoid(8)}.wav`;
+        const { url: audioUrl } = await storagePut(fileKey, audioBuffer, "audio/wav");
+
+        // Clean up local file
+        try { fs.unlinkSync(outputFile); } catch {}
+
+        // 5. Update the video record
         await db.updateVideo(input.videoId, ctx.user.id, {
           voiceoverUrl: audioUrl,
           voiceoverVoice: input.voice,
           status: "voiceover",
         });
 
-        // 5. Audit log
+        // 6. Audit log
         await db.createAuditLog({
           userId: ctx.user.id,
           action: "voiceover_generated",

@@ -22,3 +22,4 @@
 - [x] Voiceover page: display generation progress (steps, spinner, status messages)
 - [x] Voiceover page: display audio result with playback controls
 - [x] Voiceover page: backend TTS generation endpoint
+- [x] Bug fix: TTS generation 404 error - replaced Forge TTS with sherpa-onnx local TTS engine

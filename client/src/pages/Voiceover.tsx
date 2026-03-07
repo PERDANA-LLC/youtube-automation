@@ -439,7 +439,7 @@ export default function Voiceover() {
                       className="flex-1"
                     >
                       <Button variant="outline" size="sm" className="w-full text-xs">
-                        <Download className="h-3 w-3 mr-1.5" /> Download MP3
+                        <Download className="h-3 w-3 mr-1.5" /> Download Audio
                       </Button>
                     </a>
                     <Button
