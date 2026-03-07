@@ -399,6 +399,7 @@ export const appRouter = router({
           seoDescription: parsed.seoDescription,
           seoTags: parsed.tags,
           seoScore: parsed.seoScore,
+          seoSuggestions: parsed.suggestions,
           status: "seo",
         });
 
@@ -411,6 +412,36 @@ export const appRouter = router({
         });
 
         return parsed;
+      }),
+
+    // Save SEO Results (manual save after editing)
+    saveSEO: protectedProcedure
+      .input(z.object({
+        videoId: z.number(),
+        seoTitle: z.string(),
+        seoDescription: z.string(),
+        seoTags: z.array(z.string()),
+        seoScore: z.number(),
+        seoSuggestions: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await db.updateVideo(input.videoId, ctx.user.id, {
+          seoTitle: input.seoTitle,
+          seoDescription: input.seoDescription,
+          seoTags: input.seoTags,
+          seoScore: input.seoScore,
+          seoSuggestions: input.seoSuggestions ?? [],
+        });
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "seo_saved",
+          entityType: "video",
+          entityId: input.videoId,
+          details: `Saved SEO results with score: ${input.seoScore}/100`,
+        });
+
+        return { success: true };
       }),
 
     // Thumbnail Generator with retry logic

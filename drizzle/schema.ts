@@ -56,6 +56,7 @@ export const videos = mysqlTable("videos", {
   seoDescription: text("seoDescription"),
   seoTags: json("seoTags"),
   seoScore: int("seoScore"),
+  seoSuggestions: json("seoSuggestions"),
   scheduledAt: timestamp("scheduledAt"),
   publishedAt: timestamp("publishedAt"),
   researchData: json("researchData"),
