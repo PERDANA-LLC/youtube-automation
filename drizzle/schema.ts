@@ -79,6 +79,7 @@ export const contentIdeas = mysqlTable("contentIdeas", {
   viralScore: int("viralScore"),
   keywords: json("keywords"),
   isUsed: boolean("isUsed").default(false),
+  isSelected: boolean("isSelected").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

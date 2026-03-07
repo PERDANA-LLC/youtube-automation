@@ -229,6 +229,21 @@ export const appRouter = router({
         await db.markIdeaUsed(input.id, ctx.user.id);
         return { success: true };
       }),
+
+    saveSelected: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ ctx, input }) => {
+        await db.saveSelectedIdeas(input.ids, ctx.user.id);
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "ideas_saved",
+          entityType: "contentIdea",
+          details: `Saved ${input.ids.length} selected content idea(s)`,
+        });
+
+        return { success: true, count: input.ids.length };
+      }),
   }),
 
   // ---- VIDEO PIPELINE ----

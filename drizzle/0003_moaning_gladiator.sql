@@ -1,0 +1,1 @@
+ALTER TABLE `contentIdeas` ADD `isSelected` boolean DEFAULT false;

@@ -152,6 +152,22 @@ export async function markIdeaUsed(id: number, userId: number) {
   await db.update(contentIdeas).set({ isUsed: true }).where(and(eq(contentIdeas.id, id), eq(contentIdeas.userId, userId)));
 }
 
+export async function toggleIdeaSelected(id: number, userId: number) {
+  const db = await getDb(); if (!db) return;
+  const existing = await db.select().from(contentIdeas).where(and(eq(contentIdeas.id, id), eq(contentIdeas.userId, userId))).limit(1);
+  if (existing.length > 0) {
+    await db.update(contentIdeas).set({ isSelected: !existing[0].isSelected }).where(and(eq(contentIdeas.id, id), eq(contentIdeas.userId, userId)));
+  }
+}
+
+export async function saveSelectedIdeas(ids: number[], userId: number) {
+  const db = await getDb(); if (!db) return;
+  await db.update(contentIdeas).set({ isSelected: false }).where(eq(contentIdeas.userId, userId));
+  for (const id of ids) {
+    await db.update(contentIdeas).set({ isSelected: true }).where(and(eq(contentIdeas.id, id), eq(contentIdeas.userId, userId)));
+  }
+}
+
 // ---- Analytics helpers ----
 export async function createAnalytics(data: InsertAnalytics) {
   const db = await getDb(); if (!db) throw new Error("DB unavailable");

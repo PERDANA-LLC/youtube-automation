@@ -22,6 +22,13 @@
       "when": 1772927118512,
       "tag": "0002_narrow_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1772927746639,
+      "tag": "0003_moaning_gladiator",
+      "breakpoints": true
     }
   ]
 }
