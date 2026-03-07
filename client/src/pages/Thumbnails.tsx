@@ -16,18 +16,28 @@ export default function Thumbnails() {
 
   const { data: videos } = trpc.video.list.useQuery();
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const generateMutation = trpc.video.generateThumbnail.useMutation({
     onSuccess: (data) => {
       setGeneratedUrl(data.url || null);
+      setErrorMessage(null);
       utils.video.list.invalidate();
       utils.audit.list.invalidate();
       toast.success("Thumbnail generated!");
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      const msg = err.message.includes('temporarily unavailable')
+        ? 'The AI image service is temporarily busy. Please wait a moment and try again.'
+        : err.message;
+      setErrorMessage(msg);
+      toast.error(msg);
+    },
   });
 
   const handleGenerate = () => {
     if (!selectedVideoId || !prompt) return;
+    setErrorMessage(null);
     generateMutation.mutate({ videoId: selectedVideoId, prompt });
   };
 
@@ -69,6 +79,20 @@ export default function Thumbnails() {
 
         <Card className="glass-card">
           <CardContent className="p-6">
+            {errorMessage && !generatedUrl && (
+              <div className="flex flex-col items-center justify-center h-full py-8 text-center space-y-4">
+                <div className="h-14 w-14 rounded-full bg-red-500/10 flex items-center justify-center">
+                  <Image className="h-7 w-7 text-red-400" />
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-1 text-red-400">Generation Failed</h3>
+                  <p className="text-sm text-muted-foreground max-w-xs">{errorMessage}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generateMutation.isPending}>
+                  <RefreshCw className="h-3 w-3 mr-1.5" /> Try Again
+                </Button>
+              </div>
+            )}
             {generatedUrl ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">

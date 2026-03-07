@@ -413,32 +413,53 @@ export const appRouter = router({
         return parsed;
       }),
 
-    // Thumbnail Generator
+    // Thumbnail Generator with retry logic
     generateThumbnail: protectedProcedure
       .input(z.object({
         videoId: z.number(),
         prompt: z.string(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const enhancedPrompt = `YouTube thumbnail, eye-catching, vibrant colors, high contrast, bold composition: ${input.prompt}. Professional quality, 16:9 aspect ratio, no text overlays.`;
+        const enhancedPrompt = `Create a visually striking YouTube thumbnail: ${input.prompt}. Use vibrant colors, high contrast, and bold composition. Professional quality, landscape orientation.`;
 
-        const result = await generateImage({ prompt: enhancedPrompt });
+        // Retry with exponential backoff for transient provider errors
+        const MAX_RETRIES = 3;
+        let lastError: Error | null = null;
 
-        await db.updateVideo(input.videoId, ctx.user.id, {
-          thumbnailUrl: result.url,
-          thumbnailPrompt: input.prompt,
-          status: "thumbnail",
-        });
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          try {
+            if (attempt > 0) {
+              // Exponential backoff: 2s, 4s
+              await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+            }
+            const result = await generateImage({ prompt: enhancedPrompt });
 
-        await db.createAuditLog({
-          userId: ctx.user.id,
-          action: "thumbnail_generated",
-          entityType: "video",
-          entityId: input.videoId,
-          details: `Generated thumbnail for video`,
-        });
+            await db.updateVideo(input.videoId, ctx.user.id, {
+              thumbnailUrl: result.url,
+              thumbnailPrompt: input.prompt,
+              status: "thumbnail",
+            });
 
-        return { url: result.url };
+            await db.createAuditLog({
+              userId: ctx.user.id,
+              action: "thumbnail_generated",
+              entityType: "video",
+              entityId: input.videoId,
+              details: `Generated thumbnail for video (attempt ${attempt + 1})`,
+            });
+
+            return { url: result.url };
+          } catch (err: any) {
+            lastError = err;
+            console.error(`Thumbnail generation attempt ${attempt + 1} failed:`, err.message);
+            // Only retry on 500-level or transient errors
+            if (err.message && !err.message.includes('500') && !err.message.includes('GENERATE_ERROR') && !err.message.includes('Internal Server Error')) {
+              break; // Don't retry on non-transient errors
+            }
+          }
+        }
+
+        throw new Error(`Thumbnail generation failed after ${MAX_RETRIES} attempts. The AI image service may be temporarily unavailable — please try again in a moment. Last error: ${lastError?.message || 'Unknown error'}`);
       }),
 
     // Voiceover Generator (TTS) using sherpa-onnx local engine
