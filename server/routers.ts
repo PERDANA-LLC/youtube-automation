@@ -123,6 +123,21 @@ export const appRouter = router({
         await db.deleteNiche(input.id, ctx.user.id);
         return { success: true };
       }),
+
+    saveSelected: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ ctx, input }) => {
+        await db.saveSelectedNiches(input.ids, ctx.user.id);
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "niches_saved",
+          entityType: "niche",
+          details: `Saved ${input.ids.length} selected niche(s)`,
+        });
+
+        return { success: true, count: input.ids.length };
+      }),
   }),
 
   // ---- CONTENT RESEARCH ----

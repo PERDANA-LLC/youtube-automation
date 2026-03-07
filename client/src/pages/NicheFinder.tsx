@@ -1,12 +1,14 @@
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Compass, Sparkles, Trash2, Star, Loader2, TrendingUp, Target, Zap } from "lucide-react";
-import { useState } from "react";
+import { Compass, Sparkles, Trash2, Star, Loader2, TrendingUp, Target, Zap, Save, CheckCircle2, X } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
 
 const CATEGORIES = [
   "storytelling", "finance", "tech", "health", "education",
@@ -22,9 +24,21 @@ const COMPETITION_COLORS: Record<string, string> = {
 export default function NicheFinder() {
   const [category, setCategory] = useState<string>("");
   const [customNiche, setCustomNiche] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const utils = trpc.useUtils();
 
   const { data: niches, isLoading } = trpc.niche.list.useQuery();
+
+  // Initialize selectedIds from existing saved selections
+  useEffect(() => {
+    if (niches) {
+      const saved = new Set(niches.filter(n => n.isSelected).map(n => n.id));
+      setSelectedIds(saved);
+      setHasUnsavedChanges(false);
+    }
+  }, [niches]);
+
   const discoverMutation = trpc.niche.discover.useMutation({
     onSuccess: (data) => {
       utils.niche.list.invalidate();
@@ -33,12 +47,17 @@ export default function NicheFinder() {
     },
     onError: (err) => toast.error(err.message),
   });
-  const selectMutation = trpc.niche.select.useMutation({
-    onSuccess: () => {
+
+  const saveMutation = trpc.niche.saveSelected.useMutation({
+    onSuccess: (data) => {
+      setHasUnsavedChanges(false);
       utils.niche.list.invalidate();
-      toast.success("Niche selected!");
+      utils.audit.list.invalidate();
+      toast.success(`Saved ${data.count} selected niche(s)!`);
     },
+    onError: (err) => toast.error(err.message),
   });
+
   const deleteMutation = trpc.niche.delete.useMutation({
     onSuccess: () => {
       utils.niche.list.invalidate();
@@ -53,13 +72,54 @@ export default function NicheFinder() {
     });
   };
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setHasUnsavedChanges(true);
+  };
+
+  const selectAll = () => {
+    if (!niches) return;
+    setSelectedIds(new Set(niches.map(n => n.id)));
+    setHasUnsavedChanges(true);
+  };
+
+  const deselectAll = () => {
+    setSelectedIds(new Set());
+    setHasUnsavedChanges(true);
+  };
+
+  const handleSaveSelected = () => {
+    saveMutation.mutate({ ids: Array.from(selectedIds) });
+  };
+
+  const selectedCount = selectedIds.size;
+  const totalCount = niches?.length ?? 0;
+  const allSelected = totalCount > 0 && selectedCount === totalCount;
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">AI Niche Finder</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Discover profitable YouTube niches with AI-powered analysis of CPM rates, competition, and trends
-        </p>
+    <div className="space-y-6 pb-20">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">AI Niche Finder</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Discover profitable YouTube niches with AI-powered analysis of CPM rates, competition, and trends
+          </p>
+        </div>
+        {totalCount > 0 && (
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs">
+              {selectedCount}/{totalCount} selected
+            </Badge>
+          </div>
+        )}
       </div>
 
       {/* Discovery Controls */}
@@ -102,6 +162,24 @@ export default function NicheFinder() {
         </CardContent>
       </Card>
 
+      {/* Selection Controls */}
+      {totalCount > 0 && (
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={allSelected ? deselectAll : selectAll} className="text-xs">
+            {allSelected ? (
+              <><X className="h-3 w-3 mr-1.5" /> Deselect All</>
+            ) : (
+              <><CheckCircle2 className="h-3 w-3 mr-1.5" /> Select All</>
+            )}
+          </Button>
+          {selectedCount > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {selectedCount} niche{selectedCount !== 1 ? 's' : ''} selected
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Results */}
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -109,70 +187,99 @@ export default function NicheFinder() {
         </div>
       ) : niches && niches.length > 0 ? (
         <div className="grid gap-4">
-          {niches.map((niche) => (
-            <Card key={niche.id} className={`glass-card transition-all hover:border-primary/30 ${niche.isSelected ? 'border-primary/50 glow-border' : ''}`}>
-              <CardContent className="p-5">
-                <div className="flex flex-col md:flex-row md:items-start gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <h3 className="font-semibold text-lg">{niche.name}</h3>
-                      {niche.isSelected && <Star className="h-4 w-4 text-yellow-400 fill-yellow-400" />}
+          {niches.map((niche) => {
+            const isChecked = selectedIds.has(niche.id);
+            return (
+              <Card
+                key={niche.id}
+                className={`glass-card transition-all cursor-pointer ${
+                  isChecked
+                    ? 'border-primary/50 glow-border bg-primary/[0.02]'
+                    : 'hover:border-primary/20'
+                }`}
+                onClick={() => toggleSelect(niche.id)}
+              >
+                <CardContent className="p-5">
+                  <div className="flex items-start gap-4">
+                    {/* Checkbox */}
+                    <div className="pt-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={() => toggleSelect(niche.id)}
+                        className="h-5 w-5"
+                      />
                     </div>
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      <Badge variant="outline" className="capitalize text-xs">{niche.category}</Badge>
-                      {niche.subNiche && <Badge variant="secondary" className="text-xs">{niche.subNiche}</Badge>}
-                      <Badge variant="outline" className={`text-xs capitalize ${COMPETITION_COLORS[niche.competitionLevel || ''] || ''}`}>
-                        {niche.competitionLevel} competition
-                      </Badge>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-col md:flex-row md:items-start gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <h3 className="font-semibold text-lg">{niche.name}</h3>
+                            {isChecked && <Star className="h-4 w-4 text-yellow-400 fill-yellow-400" />}
+                          </div>
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            <Badge variant="outline" className="capitalize text-xs">{niche.category}</Badge>
+                            {niche.subNiche && <Badge variant="secondary" className="text-xs">{niche.subNiche}</Badge>}
+                            <Badge variant="outline" className={`text-xs capitalize ${COMPETITION_COLORS[niche.competitionLevel || ''] || ''}`}>
+                              {niche.competitionLevel} competition
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mb-3">{niche.rationale}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {(niche.keywords as string[] || []).slice(0, 6).map((kw, i) => (
+                              <Badge key={i} variant="secondary" className="text-[10px] bg-primary/5">{kw}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex flex-row md:flex-col gap-3 shrink-0">
+                          <div className="text-center px-3 py-2 rounded-lg bg-green-500/5 border border-green-500/10">
+                            <p className="text-lg font-bold text-green-400">${niche.cpmMin}-${niche.cpmMax}</p>
+                            <p className="text-[10px] text-muted-foreground">CPM Range</p>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <TrendingUp className="h-3 w-3 text-blue-400" />
+                                <span className="text-sm font-semibold">{niche.trendScore}</span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">Trend</p>
+                            </div>
+                            <div className="text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <Target className="h-3 w-3 text-purple-400" />
+                                <span className="text-sm font-semibold">{niche.profitabilityScore}</span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">Profit</p>
+                            </div>
+                            <div className="text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <Zap className="h-3 w-3 text-yellow-400" />
+                                <span className="text-sm font-semibold">{niche.automationScore}</span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">Auto</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-3">{niche.rationale}</p>
-                    <div className="flex flex-wrap gap-1">
-                      {(niche.keywords as string[] || []).slice(0, 6).map((kw, i) => (
-                        <Badge key={i} variant="secondary" className="text-[10px] bg-primary/5">{kw}</Badge>
-                      ))}
+
+                    {/* Delete button */}
+                    <div className="shrink-0 pt-1" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => deleteMutation.mutate({ id: niche.id })}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex flex-row md:flex-col gap-3 shrink-0">
-                    <div className="text-center px-3 py-2 rounded-lg bg-green-500/5 border border-green-500/10">
-                      <p className="text-lg font-bold text-green-400">${niche.cpmMin}-${niche.cpmMax}</p>
-                      <p className="text-[10px] text-muted-foreground">CPM Range</p>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <TrendingUp className="h-3 w-3 text-blue-400" />
-                          <span className="text-sm font-semibold">{niche.trendScore}</span>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">Trend</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Target className="h-3 w-3 text-purple-400" />
-                          <span className="text-sm font-semibold">{niche.profitabilityScore}</span>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">Profit</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Zap className="h-3 w-3 text-yellow-400" />
-                          <span className="text-sm font-semibold">{niche.automationScore}</span>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">Auto</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-4 pt-3 border-t border-border/50">
-                  <Button size="sm" variant={niche.isSelected ? "default" : "outline"} onClick={() => selectMutation.mutate({ id: niche.id })}>
-                    <Star className="h-3 w-3 mr-1" /> {niche.isSelected ? "Selected" : "Select"}
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => deleteMutation.mutate({ id: niche.id })}>
-                    <Trash2 className="h-3 w-3 mr-1" /> Remove
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <Card className="glass-card">
@@ -183,6 +290,45 @@ export default function NicheFinder() {
           </CardContent>
         </Card>
       )}
+
+      {/* Floating Save Bar */}
+      <AnimatePresence>
+        {totalCount > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
+          >
+            <Card className="glass-card border-primary/30 shadow-2xl shadow-primary/10">
+              <CardContent className="px-6 py-3 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={`h-2.5 w-2.5 rounded-full ${hasUnsavedChanges ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`} />
+                  <span className="text-sm font-medium whitespace-nowrap">
+                    {selectedCount} niche{selectedCount !== 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="h-6 w-px bg-border" />
+                <Button
+                  size="sm"
+                  onClick={handleSaveSelected}
+                  disabled={saveMutation.isPending || !hasUnsavedChanges}
+                  className="whitespace-nowrap"
+                >
+                  {saveMutation.isPending ? (
+                    <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Saving...</>
+                  ) : !hasUnsavedChanges ? (
+                    <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Saved</>
+                  ) : (
+                    <><Save className="h-3.5 w-3.5 mr-1.5" /> Save Selected</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -77,8 +77,21 @@ export async function deleteNiche(id: number, userId: number) {
 
 export async function selectNiche(id: number, userId: number) {
   const db = await getDb(); if (!db) return;
+  // Toggle selection for this niche (multi-select)
+  const existing = await db.select().from(niches).where(and(eq(niches.id, id), eq(niches.userId, userId))).limit(1);
+  if (existing.length > 0) {
+    await db.update(niches).set({ isSelected: !existing[0].isSelected }).where(and(eq(niches.id, id), eq(niches.userId, userId)));
+  }
+}
+
+export async function saveSelectedNiches(ids: number[], userId: number) {
+  const db = await getDb(); if (!db) return;
+  // Deselect all first
   await db.update(niches).set({ isSelected: false }).where(eq(niches.userId, userId));
-  await db.update(niches).set({ isSelected: true }).where(and(eq(niches.id, id), eq(niches.userId, userId)));
+  // Select the specified ones
+  for (const id of ids) {
+    await db.update(niches).set({ isSelected: true }).where(and(eq(niches.id, id), eq(niches.userId, userId)));
+  }
 }
 
 // ---- Video helpers ----
