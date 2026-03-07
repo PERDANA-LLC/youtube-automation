@@ -440,6 +440,79 @@ export const appRouter = router({
 
         return { url: result.url };
       }),
+
+    // Voiceover Generator (TTS)
+    generateVoiceover: protectedProcedure
+      .input(z.object({
+        videoId: z.number(),
+        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).default("alloy"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // 1. Fetch the video to get its script
+        const video = await db.getVideoById(input.videoId, ctx.user.id);
+        if (!video || !video.scriptContent) {
+          throw new Error("Video not found or has no script content");
+        }
+
+        const scriptText = video.scriptContent;
+
+        // 2. Call the TTS API (OpenAI-compatible endpoint via Forge)
+        const baseUrl = process.env.BUILT_IN_FORGE_API_URL?.replace(/\/+$/, "") ?? "";
+        const apiKey = process.env.BUILT_IN_FORGE_API_KEY ?? "";
+
+        if (!baseUrl || !apiKey) {
+          throw new Error("TTS service not configured");
+        }
+
+        const ttsResponse = await fetch(`${baseUrl}/v1/audio/speech`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "tts-1",
+            input: scriptText.slice(0, 4096), // TTS has input limit
+            voice: input.voice,
+            response_format: "mp3",
+          }),
+        });
+
+        if (!ttsResponse.ok) {
+          const errText = await ttsResponse.text().catch(() => "");
+          throw new Error(`TTS generation failed: ${ttsResponse.status} ${errText}`);
+        }
+
+        // 3. Upload the audio to S3
+        const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+        const { storagePut } = await import("./storage");
+        const { nanoid } = await import("nanoid");
+        const fileKey = `voiceovers/${ctx.user.id}/${input.videoId}-${nanoid(8)}.mp3`;
+        const { url: audioUrl } = await storagePut(fileKey, audioBuffer, "audio/mpeg");
+
+        // 4. Update the video record
+        await db.updateVideo(input.videoId, ctx.user.id, {
+          voiceoverUrl: audioUrl,
+          voiceoverVoice: input.voice,
+          status: "voiceover",
+        });
+
+        // 5. Audit log
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "voiceover_generated",
+          entityType: "video",
+          entityId: input.videoId,
+          details: `Generated voiceover with voice "${input.voice}" for "${video.title}"`,
+        });
+
+        return {
+          url: audioUrl,
+          voice: input.voice,
+          wordCount: video.scriptWordCount ?? scriptText.split(/\s+/).length,
+          charCount: scriptText.length,
+        };
+      }),
   }),
 
   // ---- ANALYTICS ----

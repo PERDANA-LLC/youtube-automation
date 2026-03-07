@@ -55,7 +55,7 @@ vi.mock("./db", () => ({
     { id: 1, title: "Test Video", status: "idea", videoType: "short", scriptContent: null, thumbnailUrl: null, updatedAt: new Date() }
   ]),
   getVideoStats: vi.fn().mockResolvedValue({ total: 5, byStatus: { idea: 2, scripting: 1, published: 2 } }),
-  getVideoById: vi.fn().mockResolvedValue({ id: 1, title: "Test Video", status: "idea" }),
+  getVideoById: vi.fn().mockResolvedValue({ id: 1, title: "Test Video", status: "scripting", scriptContent: "This is a test script for voiceover generation.", scriptWordCount: 9 }),
   createVideo: vi.fn().mockResolvedValue(1),
   updateVideo: vi.fn().mockResolvedValue(undefined),
   deleteVideo: vi.fn().mockResolvedValue(undefined),
@@ -262,6 +262,39 @@ describe("YouTube Automation Studio - Backend Tests", () => {
       });
 
       expect(result.url).toBe("https://example.com/thumbnail.png");
+    });
+
+    it("generates a voiceover for a video", async () => {
+      // Mock fetch for TTS API call
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+      }) as any;
+
+      // Mock storage
+      vi.doMock("./storage", () => ({
+        storagePut: vi.fn().mockResolvedValue({ key: "voiceovers/1/1-abc.mp3", url: "https://storage.example.com/voiceover.mp3" }),
+      }));
+
+      // Mock nanoid
+      vi.doMock("nanoid", () => ({
+        nanoid: vi.fn().mockReturnValue("abc12345"),
+      }));
+
+      try {
+        const result = await caller.video.generateVoiceover({
+          videoId: 1,
+          voice: "nova",
+        });
+
+        expect(result.url).toBeDefined();
+        expect(result.voice).toBe("nova");
+        expect(result.wordCount).toBeDefined();
+        expect(result.charCount).toBeGreaterThan(0);
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
   });
 

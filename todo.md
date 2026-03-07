@@ -19,3 +19,6 @@
 - [x] Feature 13: Revenue tracking with Stripe integration
 - [x] Audit logging for all pipeline activities
 - [x] Vitest tests for backend procedures (30 tests passing)
+- [x] Voiceover page: display generation progress (steps, spinner, status messages)
+- [x] Voiceover page: display audio result with playback controls
+- [x] Voiceover page: backend TTS generation endpoint
