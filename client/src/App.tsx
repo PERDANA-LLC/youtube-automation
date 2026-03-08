@@ -13,6 +13,7 @@ import ScriptWriter from "./pages/ScriptWriter";
 import Voiceover from "./pages/Voiceover";
 import Thumbnails from "./pages/Thumbnails";
 import SEOOptimizer from "./pages/SEOOptimizer";
+import GenerateVideo from "./pages/GenerateVideo";
 import ContentCalendar from "./pages/ContentCalendar";
 import Analytics from "./pages/Analytics";
 import Revenue from "./pages/Revenue";
@@ -31,6 +32,7 @@ function Router() {
         <Route path="/voiceover" component={Voiceover} />
         <Route path="/thumbnails" component={Thumbnails} />
         <Route path="/seo-optimizer" component={SEOOptimizer} />
+        <Route path="/generate-video" component={GenerateVideo} />
         <Route path="/content-calendar" component={ContentCalendar} />
         <Route path="/analytics" component={Analytics} />
         <Route path="/revenue" component={Revenue} />

@@ -7,6 +7,7 @@ import { invokeLLM } from "./_core/llm";
 import { generateImage } from "./_core/imageGeneration";
 import { notifyOwner } from "./_core/notification";
 import * as db from "./db";
+import { generateFullVideo } from "./videoGenerator";
 
 export const appRouter = router({
   system: systemRouter,
@@ -378,6 +379,131 @@ export const appRouter = router({
         });
 
         return parsed;
+      }),
+
+    generateVideo: protectedProcedure
+      .input(z.object({
+        videoId: z.number(),
+        prompt: z.string(),
+        style: z.string().optional(),
+        duration: z.number().default(8),
+        aspectRatio: z.string().default("16:9"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const video = await db.getVideoById(input.videoId, ctx.user.id);
+        if (!video) throw new Error("Video not found");
+
+        // Step 1: Use LLM to create a detailed clip plan
+        const llmResponse = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: `You are a professional video production AI director. Create a detailed video generation prompt following cinematic best practices.
+
+You must output a JSON object with these fields:
+- videoPrompt: A detailed 3-5 sentence prompt for video generation including visual style, camera movement, subject actions, scene environment, lighting, and pacing
+- clipPlan: An array of clip objects, each with: clipNumber, duration (4/6/8), narrativePurpose, cameraMovement, sceneDescription, transitionDescription (2-4 detailed sentences)
+- styleNotes: Brief style specification (sub-genre, rendering, color/lighting, detail density)
+- audioNotes: Sound design notes (sound effects, ambient audio, music mood)`
+            },
+            {
+              role: "user",
+              content: `Create a video generation plan for:\n\nVideo Title: ${video.title}\nUser Prompt: ${input.prompt}\nStyle: ${input.style || "Cinematic realism"}\nDuration: ${input.duration} seconds\nAspect Ratio: ${input.aspectRatio}\n${video.scriptContent ? `Script Context: ${video.scriptContent.substring(0, 500)}` : ""}\n${video.description ? `Description: ${video.description}` : ""}`
+            }
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "video_generation_plan",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  videoPrompt: { type: "string" },
+                  clipPlan: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        clipNumber: { type: "integer" },
+                        duration: { type: "integer" },
+                        narrativePurpose: { type: "string" },
+                        cameraMovement: { type: "string" },
+                        sceneDescription: { type: "string" },
+                        transitionDescription: { type: "string" }
+                      },
+                      required: ["clipNumber", "duration", "narrativePurpose", "cameraMovement", "sceneDescription", "transitionDescription"],
+                      additionalProperties: false
+                    }
+                  },
+                  styleNotes: { type: "string" },
+                  audioNotes: { type: "string" }
+                },
+                required: ["videoPrompt", "clipPlan", "styleNotes", "audioNotes"],
+                additionalProperties: false
+              }
+            }
+          }
+        });
+
+        const content = llmResponse.choices[0]?.message?.content;
+        const plan = JSON.parse(typeof content === 'string' ? content : '{}');
+
+        // Step 2: Generate actual MP4 video from keyframes using ffmpeg
+        let videoUrl: string | null = null;
+        let keyframeUrls: string[] = [];
+        try {
+          const result = await generateFullVideo(
+            plan.clipPlan,
+            plan.styleNotes,
+          );
+          videoUrl = result.videoUrl;
+          keyframeUrls = result.keyframeUrls;
+        } catch (e: any) {
+          console.warn("Full video generation failed, falling back to keyframe only:", e.message);
+          // Fallback: generate a single keyframe image
+          try {
+            const { url } = await generateImage({
+              prompt: `${plan.styleNotes}. ${plan.videoPrompt}. Cinematic 16:9 keyframe, high quality, no text, no watermarks, no logos, no annotations`,
+            });
+            keyframeUrls = url ? [url] : [];
+          } catch (e2) {
+            console.warn("Keyframe fallback also failed:", e2);
+          }
+        }
+
+        // Save the video generation data
+        await db.updateVideo(input.videoId, ctx.user.id, {
+          generatedVideoUrl: videoUrl || keyframeUrls[0] || null,
+          generatedVideoPrompt: input.prompt,
+          generatedVideoStyle: input.style || "Cinematic realism",
+          generatedVideoDuration: input.duration,
+        });
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "video_generated",
+          entityType: "video",
+          entityId: input.videoId,
+          details: `Generated ${videoUrl ? 'MP4 video' : 'keyframe'}: ${input.duration}s ${input.style || "cinematic"} - ${plan.clipPlan.length} clips`,
+        });
+
+        return { ...plan, videoUrl, keyframeUrls, keyframeUrl: keyframeUrls[0] || null };
+      }),
+
+    saveSelectedGeneratedVideos: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ ctx, input }) => {
+        await db.saveSelectedGeneratedVideos(input.ids, ctx.user.id);
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "generated_videos_saved",
+          entityType: "video",
+          details: `Saved ${input.ids.length} selected generated video(s)`,
+        });
+
+        return { success: true, count: input.ids.length };
       }),
 
     saveSelectedThumbnails: protectedProcedure

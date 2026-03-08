@@ -50,6 +50,13 @@
       "when": 1772928574469,
       "tag": "0006_broad_wind_dancer",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1772928952476,
+      "tag": "0007_bright_ronan",
+      "breakpoints": true
     }
   ]
 }

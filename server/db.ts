@@ -122,6 +122,14 @@ export async function deleteVideo(id: number, userId: number) {
   await db.delete(videos).where(and(eq(videos.id, id), eq(videos.userId, userId)));
 }
 
+export async function saveSelectedGeneratedVideos(ids: number[], userId: number) {
+  const db = await getDb(); if (!db) return;
+  await db.update(videos).set({ generatedVideoSaved: false }).where(eq(videos.userId, userId));
+  for (const id of ids) {
+    await db.update(videos).set({ generatedVideoSaved: true }).where(and(eq(videos.id, id), eq(videos.userId, userId)));
+  }
+}
+
 export async function saveSelectedThumbnails(ids: number[], userId: number) {
   const db = await getDb(); if (!db) return;
   await db.update(videos).set({ thumbnailSaved: false }).where(eq(videos.userId, userId));

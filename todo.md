@@ -30,3 +30,9 @@
 - [x] Script Writer: allow user to multi-select and save script cards to the database
 - [x] Voiceover: allow user to multi-select and save voiceover cards to the database
 - [x] Thumbnails: allow user to multi-select and save thumbnail cards to the database
+- [x] Generate Video: add new page using Manus video generator after SEO Optimizer in sidebar
+- [x] Generate Video: backend endpoint for Manus video generation
+- [x] Generate Video: multi-select and save generated videos
+- [x] Bug fix: /generate-video progress never completes - fixed with auto-advance timer and proper completion state
+- [x] Bug fix: /generate-video now generates real MP4 videos using ffmpeg with Ken Burns effects from AI keyframes
+- [x] Implemented real video generation: AI keyframes → ffmpeg MP4 with Ken Burns zoom/pan + crossfade transitions
