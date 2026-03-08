@@ -50,6 +50,7 @@ export const videos = mysqlTable("videos", {
   scriptWordCount: int("scriptWordCount"),
   voiceoverUrl: varchar("voiceoverUrl", { length: 1000 }),
   voiceoverVoice: varchar("voiceoverVoice", { length: 100 }),
+  voiceoverSaved: boolean("voiceoverSaved").default(false),
   thumbnailUrl: varchar("thumbnailUrl", { length: 1000 }),
   thumbnailPrompt: text("thumbnailPrompt"),
   seoTitle: varchar("seoTitle", { length: 500 }),

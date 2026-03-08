@@ -3,10 +3,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Mic, Play, Pause, Volume2, Info, CheckCircle2, Loader2, FileText, Upload, Wand2, Download, RotateCcw, AlertCircle } from "lucide-react";
+import { Mic, Play, Pause, Volume2, CheckCircle2, Loader2, FileText, Wand2, Download, RotateCcw, AlertCircle, Save, Star, X } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
 
 const VOICE_OPTIONS = [
   { id: "alloy", name: "Alloy", desc: "Neutral, balanced", color: "text-blue-400" },
@@ -47,9 +49,24 @@ export default function Voiceover() {
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
   const { data: videos, refetch: refetchVideos } = trpc.video.list.useQuery();
+  const utils = trpc.useUtils();
   const videosWithScripts = videos?.filter(v => v.scriptContent) ?? [];
+  const videosWithVoiceovers = videos?.filter(v => v.voiceoverUrl) ?? [];
   const selectedVideo = videosWithScripts.find(v => v.id === selectedVideoId);
+
+  // Initialize selectedIds from existing saved selections
+  useEffect(() => {
+    if (videos) {
+      const saved = new Set(videos.filter(v => v.voiceoverSaved).map(v => v.id));
+      setSelectedIds(saved);
+      setHasUnsavedChanges(false);
+    }
+  }, [videos]);
 
   const generateVoiceover = trpc.video.generateVoiceover.useMutation({
     onSuccess: (data) => {
@@ -72,15 +89,24 @@ export default function Voiceover() {
     },
   });
 
+  const saveMutation = trpc.video.saveSelectedVoiceovers.useMutation({
+    onSuccess: (data) => {
+      setHasUnsavedChanges(false);
+      utils.video.list.invalidate();
+      utils.audit.list.invalidate();
+      toast.success(`Saved ${data.count} selected voiceover(s)!`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   // Simulate step progression during the mutation
   const advanceSteps = useCallback(() => {
     if (!isGenerating) return;
 
-    const timings = [500, 2000, 8000, 12000]; // ms for each step to become active
+    const timings = [500, 2000, 8000, 12000];
     timings.forEach((delay, idx) => {
       setTimeout(() => {
         setSteps(prev => {
-          // Don't advance if we already got a result or error
           const hasError = prev.some(s => s.status === "error");
           const allDone = prev.every(s => s.status === "done");
           if (hasError || allDone) return prev;
@@ -107,7 +133,6 @@ export default function Voiceover() {
     setIsPlaying(false);
     setAudioProgress(0);
 
-    // Start step progression
     setTimeout(() => advanceSteps(), 0);
 
     generateVoiceover.mutate({
@@ -152,11 +177,37 @@ export default function Voiceover() {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  // Determine the audio URL to display (either from generation result or existing video)
+  // Multi-select handlers
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setHasUnsavedChanges(true);
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(videosWithVoiceovers.map(v => v.id)));
+    setHasUnsavedChanges(true);
+  };
+
+  const deselectAll = () => {
+    setSelectedIds(new Set());
+    setHasUnsavedChanges(true);
+  };
+
+  const handleSaveSelected = () => {
+    saveMutation.mutate({ ids: Array.from(selectedIds) });
+  };
+
   const activeAudioUrl = generationResult?.url || selectedVideo?.voiceoverUrl;
   const activeVoice = generationResult?.voice || selectedVideo?.voiceoverVoice;
 
-  // Calculate overall progress percentage
   const completedSteps = steps.filter(s => s.status === "done").length;
   const overallProgress = isGenerating
     ? Math.min(((completedSteps + (steps.some(s => s.status === "active") ? 0.5 : 0)) / steps.length) * 100, 95)
@@ -164,8 +215,12 @@ export default function Voiceover() {
       ? 100
       : 0;
 
+  const voiceoverSelectedCount = selectedIds.size;
+  const voiceoverTotalCount = videosWithVoiceovers.length;
+  const allVoiceoversSelected = voiceoverTotalCount > 0 && voiceoverSelectedCount === voiceoverTotalCount;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Voiceover Studio</h1>
         <p className="text-muted-foreground text-sm mt-1">
@@ -243,13 +298,9 @@ export default function Voiceover() {
                 onClick={handleGenerate}
               >
                 {isGenerating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating Voiceover...
-                  </>
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating Voiceover...</>
                 ) : (
-                  <>
-                    <Wand2 className="h-4 w-4 mr-2" /> Generate Voiceover
-                  </>
+                  <><Wand2 className="h-4 w-4 mr-2" /> Generate Voiceover</>
                 )}
               </Button>
             </CardContent>
@@ -259,7 +310,7 @@ export default function Voiceover() {
           {selectedVideo?.scriptContent && (
             <Card className="glass-card">
               <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-2">
                   <h3 className="font-semibold text-sm">Script Preview</h3>
                   <Badge variant="secondary" className="text-[10px]">{selectedVideo.scriptWordCount} words</Badge>
                 </div>
@@ -319,7 +370,6 @@ export default function Voiceover() {
                             : "bg-secondary/20 border border-transparent"
                     }`}
                   >
-                    {/* Step Icon */}
                     <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
                       step.status === "active"
                         ? "bg-primary/10"
@@ -337,7 +387,6 @@ export default function Voiceover() {
                       )}
                     </div>
 
-                    {/* Step Label */}
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-medium ${
                         step.status === "active" ? "text-primary" :
@@ -390,7 +439,7 @@ export default function Voiceover() {
 
                 {/* Audio Player */}
                 <div className="bg-secondary/30 rounded-xl p-5 space-y-4">
-                  {/* Waveform Visualization (simplified) */}
+                  {/* Waveform Visualization */}
                   <div className="flex items-center gap-1 h-12 justify-center">
                     {Array.from({ length: 40 }).map((_, i) => {
                       const height = Math.random() * 80 + 20;
@@ -466,47 +515,144 @@ export default function Voiceover() {
               </CardContent>
             </Card>
           )}
-
-          {/* Completed Voiceovers List */}
-          {videos?.filter(v => v.voiceoverUrl).length ? (
-            <Card className="glass-card">
-              <CardContent className="p-6">
-                <h3 className="font-semibold mb-3 text-sm">All Completed Voiceovers</h3>
-                <div className="space-y-2">
-                  {videos.filter(v => v.voiceoverUrl).map((v) => (
-                    <div
-                      key={v.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg transition-colors cursor-pointer ${
-                        selectedVideoId === v.id
-                          ? "bg-primary/5 border border-primary/20"
-                          : "bg-secondary/30 hover:bg-secondary/50 border border-transparent"
-                      }`}
-                      onClick={() => {
-                        setSelectedVideoId(v.id);
-                        setGenerationResult(null);
-                        setSteps(INITIAL_STEPS.map(s => ({ ...s, status: "done" as const })));
-                      }}
-                    >
-                      <div className="h-8 w-8 rounded-full bg-green-500/10 flex items-center justify-center shrink-0">
-                        <Play className="h-3.5 w-3.5 text-green-400" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{v.title}</p>
-                        <p className="text-[10px] text-muted-foreground">
-                          Voice: {VOICE_OPTIONS.find(vo => vo.id === v.voiceoverVoice)?.name || v.voiceoverVoice || "Default"}
-                        </p>
-                      </div>
-                      <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-400 shrink-0">
-                        <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> Done
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
         </div>
       </div>
+
+      {/* Completed Voiceovers Section with Multi-Select */}
+      {videosWithVoiceovers.length > 0 && (
+        <>
+          <div className="flex items-center justify-between pt-4 border-t border-border/50">
+            <div>
+              <h2 className="text-lg font-semibold">Completed Voiceovers</h2>
+              <p className="text-muted-foreground text-xs mt-0.5">
+                Select voiceovers to save and manage your collection
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge variant="outline" className="text-xs">
+                {voiceoverSelectedCount}/{voiceoverTotalCount} selected
+              </Badge>
+              <Button variant="outline" size="sm" onClick={allVoiceoversSelected ? deselectAll : selectAll} className="text-xs">
+                {allVoiceoversSelected ? (
+                  <><X className="h-3 w-3 mr-1.5" /> Deselect All</>
+                ) : (
+                  <><CheckCircle2 className="h-3 w-3 mr-1.5" /> Select All</>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            {videosWithVoiceovers.map((v) => {
+              const isChecked = selectedIds.has(v.id);
+              return (
+                <Card
+                  key={v.id}
+                  className={`glass-card transition-all cursor-pointer ${
+                    isChecked
+                      ? 'border-primary/50 glow-border bg-primary/[0.02]'
+                      : 'hover:border-primary/20'
+                  }`}
+                  onClick={() => toggleSelect(v.id)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-3">
+                      {/* Checkbox */}
+                      <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => toggleSelect(v.id)}
+                          className="h-5 w-5"
+                        />
+                      </div>
+
+                      {/* Play icon */}
+                      <div
+                        className="h-9 w-9 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 hover:bg-green-500/20 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedVideoId(v.id);
+                          setGenerationResult(null);
+                          setSteps(INITIAL_STEPS.map(s => ({ ...s, status: "done" as const })));
+                        }}
+                      >
+                        <Play className="h-3.5 w-3.5 text-green-400" />
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium truncate">{v.title}</p>
+                          {isChecked && <Star className="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-[10px] text-muted-foreground">
+                            Voice: {VOICE_OPTIONS.find(vo => vo.id === v.voiceoverVoice)?.name || v.voiceoverVoice || "Default"}
+                          </p>
+                          {v.scriptWordCount && (
+                            <Badge variant="secondary" className="text-[10px]">{v.scriptWordCount} words</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Status + Download */}
+                      <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <a href={v.voiceoverUrl || ''} download target="_blank" rel="noopener noreferrer">
+                          <Button size="sm" variant="outline" className="h-7 text-xs">
+                            <Download className="h-3 w-3 mr-1" /> Download
+                          </Button>
+                        </a>
+                        <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-400">
+                          <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> Done
+                        </Badge>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Floating Save Bar */}
+      <AnimatePresence>
+        {voiceoverTotalCount > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
+          >
+            <Card className="glass-card border-primary/30 shadow-2xl shadow-primary/10">
+              <CardContent className="px-6 py-3 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={`h-2.5 w-2.5 rounded-full ${hasUnsavedChanges ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`} />
+                  <span className="text-sm font-medium whitespace-nowrap">
+                    {voiceoverSelectedCount} voiceover{voiceoverSelectedCount !== 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="h-6 w-px bg-border" />
+                <Button
+                  size="sm"
+                  onClick={handleSaveSelected}
+                  disabled={saveMutation.isPending || !hasUnsavedChanges}
+                  className="whitespace-nowrap"
+                >
+                  {saveMutation.isPending ? (
+                    <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Saving...</>
+                  ) : !hasUnsavedChanges ? (
+                    <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Saved</>
+                  ) : (
+                    <><Save className="h-3.5 w-3.5 mr-1.5" /> Save Selected</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

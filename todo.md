@@ -28,3 +28,4 @@
 - [x] Niche Finder: allow user to select and save niche cards to the database
 - [x] Content Research: allow user to multi-select and save content idea cards to the database
 - [x] Script Writer: allow user to multi-select and save script cards to the database
+- [x] Voiceover: allow user to multi-select and save voiceover cards to the database

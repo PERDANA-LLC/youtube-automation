@@ -380,6 +380,21 @@ export const appRouter = router({
         return parsed;
       }),
 
+    saveSelectedVoiceovers: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ ctx, input }) => {
+        await db.saveSelectedVoiceovers(input.ids, ctx.user.id);
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "voiceovers_saved",
+          entityType: "video",
+          details: `Saved ${input.ids.length} selected voiceover(s)`,
+        });
+
+        return { success: true, count: input.ids.length };
+      }),
+
     saveSelectedScripts: protectedProcedure
       .input(z.object({ ids: z.array(z.number()) }))
       .mutation(async ({ ctx, input }) => {
