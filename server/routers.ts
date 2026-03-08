@@ -450,12 +450,15 @@ You must output a JSON object with these fields:
         const plan = JSON.parse(typeof content === 'string' ? content : '{}');
 
         // Step 2: Generate actual MP4 video from keyframes using ffmpeg
+        // Include voiceover audio if available
+        const voiceoverUrl = video.voiceoverUrl || null;
         let videoUrl: string | null = null;
         let keyframeUrls: string[] = [];
         try {
           const result = await generateFullVideo(
             plan.clipPlan,
             plan.styleNotes,
+            voiceoverUrl,
           );
           videoUrl = result.videoUrl;
           keyframeUrls = result.keyframeUrls;
@@ -488,7 +491,7 @@ You must output a JSON object with these fields:
           details: `Generated ${videoUrl ? 'MP4 video' : 'keyframe'}: ${input.duration}s ${input.style || "cinematic"} - ${plan.clipPlan.length} clips`,
         });
 
-        return { ...plan, videoUrl, keyframeUrls, keyframeUrl: keyframeUrls[0] || null };
+        return { ...plan, videoUrl, keyframeUrls, keyframeUrl: keyframeUrls[0] || null, hasVoiceover: !!voiceoverUrl };
       }),
 
     saveSelectedGeneratedVideos: protectedProcedure

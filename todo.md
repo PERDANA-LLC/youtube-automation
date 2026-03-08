@@ -36,3 +36,5 @@
 - [x] Bug fix: /generate-video progress never completes - fixed with auto-advance timer and proper completion state
 - [x] Bug fix: /generate-video now generates real MP4 videos using ffmpeg with Ken Burns effects from AI keyframes
 - [x] Implemented real video generation: AI keyframes → ffmpeg MP4 with Ken Burns zoom/pan + crossfade transitions
+- [x] Bug fix: /generate-video progress - replaced fixed timers with elapsed-time-based auto-advance
+- [x] Bug fix: /generate-video now overlays voiceover audio onto video using ffmpeg

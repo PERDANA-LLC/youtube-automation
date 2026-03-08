@@ -196,14 +196,47 @@ export async function createVideoFromKeyframes(
 }
 
 /**
+ * Overlay voiceover audio onto a video file using ffmpeg
+ */
+export async function overlayAudioOnVideo(
+  videoPath: string,
+  audioUrl: string,
+  outputPath: string
+): Promise<void> {
+  ensureWorkDir();
+  const audioPath = join(WORK_DIR, `audio_${Date.now()}.wav`);
+  
+  try {
+    // Download the voiceover audio
+    const response = await fetch(audioUrl);
+    if (!response.ok) throw new Error(`Failed to download audio: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    writeFileSync(audioPath, buffer);
+
+    // Combine video + audio with ffmpeg
+    // -shortest ensures the output matches the shorter of video/audio
+    execSync(
+      `ffmpeg -y -i "${videoPath}" -i "${audioPath}" ` +
+      `-c:v copy -c:a aac -b:a 128k -shortest ` +
+      `"${outputPath}"`,
+      { timeout: 120000 }
+    );
+  } finally {
+    cleanupFiles([audioPath]);
+  }
+}
+
+/**
  * Full video generation pipeline:
  * 1. Generate keyframe images for each clip
  * 2. Create MP4 video with Ken Burns effects
- * 3. Upload to S3
+ * 3. Overlay voiceover audio if available
+ * 4. Upload to S3
  */
 export async function generateFullVideo(
   clipPlan: Array<{ clipNumber: number; duration: number; sceneDescription: string; cameraMovement: string }>,
   styleNotes: string,
+  voiceoverUrl?: string | null,
   onProgress?: (step: string, detail: string) => void
 ): Promise<{ videoUrl: string; keyframeUrls: string[] }> {
   // Step 1: Generate keyframes
@@ -221,16 +254,36 @@ export async function generateFullVideo(
   // Step 2: Create video from keyframes
   onProgress?.("video", "Creating MP4 video with Ken Burns effects...");
   const clipDurations = clipPlan.map(c => c.duration || 6);
-  // Only use durations for clips that have keyframes
   const usedDurations = clipDurations.slice(0, keyframeUrls.length);
 
   const videoBuffer = await createVideoFromKeyframes(keyframeUrls, usedDurations);
 
-  // Step 3: Upload to S3
+  // Step 3: Overlay voiceover audio if available
+  let finalBuffer = videoBuffer;
+  if (voiceoverUrl) {
+    onProgress?.("audio", "Overlaying voiceover audio...");
+    ensureWorkDir();
+    const timestamp = Date.now();
+    const silentVideoPath = join(WORK_DIR, `silent_${timestamp}.mp4`);
+    const finalVideoPath = join(WORK_DIR, `final_${timestamp}.mp4`);
+    
+    try {
+      writeFileSync(silentVideoPath, videoBuffer);
+      await overlayAudioOnVideo(silentVideoPath, voiceoverUrl, finalVideoPath);
+      finalBuffer = readFileSync(finalVideoPath);
+    } catch (e: any) {
+      console.warn("Audio overlay failed, using silent video:", e.message);
+      // Fall back to silent video
+    } finally {
+      cleanupFiles([silentVideoPath, finalVideoPath]);
+    }
+  }
+
+  // Step 4: Upload to S3
   onProgress?.("upload", "Uploading video to storage...");
   const { url: videoUrl } = await storagePut(
     `videos/generated-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`,
-    videoBuffer,
+    finalBuffer,
     "video/mp4"
   );
 

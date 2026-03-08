@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Video,
@@ -31,6 +31,8 @@ import {
   AlertCircle,
   FileVideo,
   Wand2,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 const VIDEO_STYLES = [
@@ -54,13 +56,20 @@ const DURATIONS = [
   { value: "32", label: "32 seconds", desc: "Full scene (4 clips)" },
 ];
 
-const PROGRESS_STEPS = [
-  { id: "planning", label: "AI Director Planning", icon: Clapperboard, desc: "Creating cinematic shot plan..." },
+const PROGRESS_PHASES = [
+  { id: "planning", label: "AI Director Planning", icon: Clapperboard, desc: "Creating cinematic shot plan with clip details..." },
   { id: "keyframes", label: "Generating Keyframes", icon: ImageIcon, desc: "Creating AI keyframe images for each clip..." },
   { id: "video", label: "Rendering Video", icon: FileVideo, desc: "Stitching keyframes into MP4 with Ken Burns effects..." },
-  { id: "upload", label: "Uploading", icon: Save, desc: "Uploading video to storage..." },
+  { id: "audio", label: "Adding Voiceover", icon: Volume2, desc: "Overlaying voiceover narration onto video..." },
+  { id: "upload", label: "Uploading", icon: Save, desc: "Uploading final video to cloud storage..." },
   { id: "complete", label: "Complete", icon: CheckCircle2, desc: "Video ready to play!" },
 ];
+
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 export default function GenerateVideo() {
   const { user } = useAuth();
@@ -69,7 +78,6 @@ export default function GenerateVideo() {
   const [style, setStyle] = useState("cinematic-realism");
   const [duration, setDuration] = useState("8");
   const [aspectRatio, setAspectRatio] = useState("16:9");
-  const [currentStep, setCurrentStep] = useState(-1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationResult, setGenerationResult] = useState<any>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -77,12 +85,20 @@ export default function GenerateVideo() {
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
   const [expandedClips, setExpandedClips] = useState<Set<number>>(new Set());
   const [isPlaying, setIsPlaying] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [progressPhase, setProgressPhase] = useState(-1);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: videos, isLoading } = trpc.video.list.useQuery();
   const generateMutation = trpc.video.generateVideo.useMutation();
   const saveMutation = trpc.video.saveSelectedGeneratedVideos.useMutation();
   const utils = trpc.useUtils();
+
+  // Selected video details
+  const selectedVideo = useMemo(() => {
+    return (videos || []).find((v: any) => v.id === selectedVideoId);
+  }, [videos, selectedVideoId]);
 
   // Videos with generated content
   const generatedVideos = useMemo(() => {
@@ -104,6 +120,44 @@ export default function GenerateVideo() {
       setSelectedIds(selected);
     }
   }, [videos]);
+
+  // Elapsed time counter
+  useEffect(() => {
+    if (isGenerating) {
+      setElapsedSeconds(0);
+      timerRef.current = setInterval(() => {
+        setElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isGenerating]);
+
+  // Auto-advance progress phases based on elapsed time
+  // This provides smooth visual feedback during the long API call
+  useEffect(() => {
+    if (!isGenerating) return;
+    // Phase transitions based on typical timing:
+    // 0-3s: Planning (LLM call starts)
+    // 3-20s: Generating keyframes (image gen for each clip)
+    // 20-60s: Rendering video (ffmpeg processing)
+    // 60-80s: Adding voiceover / uploading
+    if (elapsedSeconds >= 60 && progressPhase < 4) {
+      setProgressPhase(4); // upload
+    } else if (elapsedSeconds >= 40 && progressPhase < 3) {
+      setProgressPhase(3); // audio overlay
+    } else if (elapsedSeconds >= 20 && progressPhase < 2) {
+      setProgressPhase(2); // rendering video
+    } else if (elapsedSeconds >= 3 && progressPhase < 1) {
+      setProgressPhase(1); // keyframes
+    }
+  }, [elapsedSeconds, isGenerating, progressPhase]);
 
   const hasUnsavedChanges = useMemo(() => {
     if (selectedIds.size !== savedIds.size) return true;
@@ -158,17 +212,7 @@ export default function GenerateVideo() {
     setIsGenerating(true);
     setGenerationError(null);
     setGenerationResult(null);
-    setCurrentStep(0);
-
-    // Auto-advance progress to simulate real-time feedback during long API call
-    const progressTimers: NodeJS.Timeout[] = [];
-
-    // Step 0 → 1 after 3s (planning → keyframes)
-    progressTimers.push(setTimeout(() => setCurrentStep(1), 3000));
-    // Step 1 → 2 after 15s (keyframes → rendering)
-    progressTimers.push(setTimeout(() => setCurrentStep(2), 15000));
-    // Step 2 → 3 after 30s (rendering → uploading)
-    progressTimers.push(setTimeout(() => setCurrentStep(3), 30000));
+    setProgressPhase(0); // Start at planning
 
     try {
       const result = await generateMutation.mutateAsync({
@@ -179,21 +223,21 @@ export default function GenerateVideo() {
         aspectRatio,
       });
 
-      // Clear timers and jump to complete
-      progressTimers.forEach(clearTimeout);
-      setCurrentStep(4); // Complete
+      // Jump to complete
+      setProgressPhase(5); // Complete index
       setIsGenerating(false);
       setGenerationResult(result);
       utils.video.list.invalidate();
 
       if (result.videoUrl) {
-        toast.success("MP4 video generated successfully!");
+        toast.success(result.hasVoiceover
+          ? "Video generated with voiceover narration!"
+          : "MP4 video generated successfully!");
       } else {
         toast.success("Video plan created with keyframes!");
       }
     } catch (err: any) {
-      progressTimers.forEach(clearTimeout);
-      setCurrentStep(-1);
+      setProgressPhase(-1);
       setGenerationError(err.message || "Video generation failed");
       toast.error("Video generation failed. Please try again.");
       setIsGenerating(false);
@@ -211,7 +255,8 @@ export default function GenerateVideo() {
     }
   };
 
-  const progressPercent = currentStep < 0 ? 0 : Math.min(((currentStep + 1) / PROGRESS_STEPS.length) * 100, 100);
+  const totalPhases = PROGRESS_PHASES.length;
+  const progressPercent = progressPhase < 0 ? 0 : Math.min(((progressPhase + 1) / totalPhases) * 100, 100);
 
   const isVideoUrl = (url: string) => {
     return url?.endsWith('.mp4') || url?.endsWith('.webm') || url?.endsWith('.mov');
@@ -226,7 +271,7 @@ export default function GenerateVideo() {
             Generate Video
           </h1>
           <p className="text-muted-foreground mt-1">
-            AI-powered video generation — creates real MP4 videos from AI keyframes with Ken Burns effects
+            AI-powered video generation — creates real MP4 videos with voiceover from AI keyframes
           </p>
         </div>
         <Badge variant="outline" className="border-purple-500/30 text-purple-400">
@@ -245,7 +290,7 @@ export default function GenerateVideo() {
                 Video Generation Studio
               </CardTitle>
               <CardDescription>
-                Select a video project and describe the video you want to generate. The AI will create keyframe images and stitch them into an MP4 video with cinematic effects.
+                Select a video project and describe the video you want to generate. If the video has a voiceover, it will be automatically overlaid onto the final MP4.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -263,10 +308,27 @@ export default function GenerateVideo() {
                     {(videos || []).map((v: any) => (
                       <SelectItem key={v.id} value={v.id.toString()}>
                         {v.title} — {v.status}
+                        {v.voiceoverUrl ? " 🎙️" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {/* Voiceover indicator */}
+                {selectedVideo && (
+                  <div className="flex items-center gap-2 text-xs">
+                    {selectedVideo.voiceoverUrl ? (
+                      <span className="flex items-center gap-1 text-green-400">
+                        <Volume2 className="w-3 h-3" />
+                        Voiceover available — will be included in the video
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <VolumeX className="w-3 h-3" />
+                        No voiceover — generate one in the Voiceover page first for narrated video
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Prompt */}
@@ -336,7 +398,7 @@ export default function GenerateVideo() {
                 {isGenerating ? (
                   <>
                     <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Generating Video...
+                    Generating Video... ({formatElapsed(elapsedSeconds)})
                   </>
                 ) : (
                   <>
@@ -349,59 +411,75 @@ export default function GenerateVideo() {
           </Card>
 
           {/* Progress Tracker */}
-          {(isGenerating || currentStep >= 0) && currentStep < PROGRESS_STEPS.length && (
+          {(isGenerating || progressPhase >= 0) && progressPhase < totalPhases && (
             <Card className="border-border/50 bg-card/50 backdrop-blur">
               <CardContent className="pt-6 space-y-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium">Generation Progress</span>
+                  <span className="text-sm font-medium flex items-center gap-2">
+                    Generation Progress
+                    {isGenerating && (
+                      <Badge variant="outline" className="border-purple-500/30 text-purple-400 text-[10px]">
+                        <Clock className="w-3 h-3 mr-1" />
+                        {formatElapsed(elapsedSeconds)}
+                      </Badge>
+                    )}
+                  </span>
                   <span className="text-xs text-muted-foreground">
-                    {currentStep >= PROGRESS_STEPS.length - 1 ? "Complete" : `Step ${Math.min(currentStep + 1, PROGRESS_STEPS.length)} of ${PROGRESS_STEPS.length}`}
+                    {progressPhase >= totalPhases - 1
+                      ? "Complete!"
+                      : `Step ${Math.min(progressPhase + 1, totalPhases)} of ${totalPhases}`}
                   </span>
                 </div>
                 <Progress value={progressPercent} className="h-2" />
 
+                {isGenerating && (
+                  <p className="text-xs text-muted-foreground text-center">
+                    Video generation typically takes 60-120 seconds depending on the number of clips and complexity.
+                  </p>
+                )}
+
                 <div className="space-y-3 mt-4">
-                  {PROGRESS_STEPS.map((step, idx) => {
-                    const StepIcon = step.icon;
-                    const isComplete = currentStep > idx;
-                    const isActive = currentStep === idx;
-                    const isPending = currentStep < idx;
+                  {PROGRESS_PHASES.map((phase, idx) => {
+                    const PhaseIcon = phase.icon;
+                    const isComplete = progressPhase > idx;
+                    const isActive = progressPhase === idx && isGenerating;
+                    const isDone = progressPhase === idx && !isGenerating && progressPhase === totalPhases - 1;
 
                     return (
                       <motion.div
-                        key={step.id}
+                        key={phase.id}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.1 }}
+                        transition={{ delay: idx * 0.05 }}
                         className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
                           isActive ? "bg-purple-500/10 border border-purple-500/30" :
-                          isComplete ? "bg-green-500/5 border border-green-500/20" :
+                          isComplete || isDone ? "bg-green-500/5 border border-green-500/20" :
                           "opacity-40"
                         }`}
                       >
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                          isComplete ? "bg-green-500/20 text-green-400" :
+                          isComplete || isDone ? "bg-green-500/20 text-green-400" :
                           isActive ? "bg-purple-500/20 text-purple-400" :
                           "bg-muted/30 text-muted-foreground"
                         }`}>
-                          {isComplete ? (
+                          {isComplete || isDone ? (
                             <CheckCircle2 className="w-4 h-4" />
                           ) : isActive ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                           ) : (
-                            <StepIcon className="w-4 h-4" />
+                            <PhaseIcon className="w-4 h-4" />
                           )}
                         </div>
                         <div className="flex-1">
                           <p className={`text-sm font-medium ${
-                            isComplete ? "text-green-400" :
+                            isComplete || isDone ? "text-green-400" :
                             isActive ? "text-purple-400" : ""
                           }`}>
-                            {step.label}
-                            {isComplete && " ✓"}
+                            {phase.label}
+                            {(isComplete || isDone) && " ✓"}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {isComplete ? "Done" : isActive ? step.desc : "Waiting..."}
+                            {isComplete || isDone ? "Done" : isActive ? phase.desc : "Waiting..."}
                           </p>
                         </div>
                       </motion.div>
@@ -454,6 +532,12 @@ export default function GenerateVideo() {
                         <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">
                           MP4
                         </Badge>
+                        {generationResult.hasVoiceover && (
+                          <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[10px]">
+                            <Volume2 className="w-2.5 h-2.5 mr-0.5" />
+                            With Voiceover
+                          </Badge>
+                        )}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
@@ -494,6 +578,12 @@ export default function GenerateVideo() {
                           </Button>
                         </a>
                       </div>
+                      {generationResult.hasVoiceover && (
+                        <p className="text-xs text-green-400/80 flex items-center gap-1">
+                          <Volume2 className="w-3 h-3" />
+                          This video includes your voiceover narration. Make sure to unmute the player to hear it.
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -599,22 +689,14 @@ export default function GenerateVideo() {
                             </div>
                             <div className="text-left">
                               <p className="text-sm font-medium">{clip.narrativePurpose}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {clip.duration}s · {clip.cameraMovement}
-                              </p>
+                              <p className="text-xs text-muted-foreground">{clip.duration}s — {clip.cameraMovement}</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-[10px]">
-                              <Clock className="w-3 h-3 mr-1" />
-                              {clip.duration}s
-                            </Badge>
-                            {expandedClips.has(clip.clipNumber) ? (
-                              <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                            )}
-                          </div>
+                          {expandedClips.has(clip.clipNumber) ? (
+                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                          )}
                         </button>
                         <AnimatePresence>
                           {expandedClips.has(clip.clipNumber) && (
@@ -624,14 +706,14 @@ export default function GenerateVideo() {
                               exit={{ height: 0, opacity: 0 }}
                               className="overflow-hidden"
                             >
-                              <div className="px-3 pb-3 space-y-2 border-t border-border/30 pt-3">
+                              <div className="p-3 pt-0 space-y-2 text-sm">
                                 <div>
-                                  <p className="text-xs font-medium text-muted-foreground mb-1">Scene</p>
-                                  <p className="text-sm">{clip.sceneDescription}</p>
+                                  <span className="text-xs font-medium text-muted-foreground">Scene:</span>
+                                  <p className="text-muted-foreground">{clip.sceneDescription}</p>
                                 </div>
                                 <div>
-                                  <p className="text-xs font-medium text-muted-foreground mb-1">Transition</p>
-                                  <p className="text-sm">{clip.transitionDescription}</p>
+                                  <span className="text-xs font-medium text-muted-foreground">Transition:</span>
+                                  <p className="text-muted-foreground">{clip.transitionDescription}</p>
                                 </div>
                               </div>
                             </motion.div>
@@ -643,84 +725,65 @@ export default function GenerateVideo() {
                 </Card>
 
                 {/* Style & Audio Notes */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card className="border-border/50 bg-card/50 backdrop-blur">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Style Notes</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground">{generationResult.styleNotes}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-border/50 bg-card/50 backdrop-blur">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Audio Notes</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground">{generationResult.audioNotes}</p>
-                    </CardContent>
-                  </Card>
-                </div>
+                {(generationResult.styleNotes || generationResult.audioNotes) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {generationResult.styleNotes && (
+                      <Card className="border-border/50 bg-card/50 backdrop-blur">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Camera className="w-4 h-4 text-purple-400" />
+                            Style Notes
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{generationResult.styleNotes}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {generationResult.audioNotes && (
+                      <Card className="border-border/50 bg-card/50 backdrop-blur">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Volume2 className="w-4 h-4 text-purple-400" />
+                            Audio Notes
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{generationResult.audioNotes}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Right Sidebar - Style Guide */}
+        {/* Sidebar: Style Guide */}
         <div className="space-y-4">
           <Card className="border-border/50 bg-card/50 backdrop-blur">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-400" />
                 Style Guide
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {VIDEO_STYLES.map((s) => (
-                <button
+              {VIDEO_STYLES.map(s => (
+                <div
                   key={s.value}
-                  onClick={() => setStyle(s.value)}
-                  className={`w-full text-left p-2.5 rounded-lg border transition-all ${
+                  className={`p-2 rounded-lg cursor-pointer transition-all ${
                     style === s.value
-                      ? "border-purple-500/50 bg-purple-500/10"
-                      : "border-transparent hover:bg-muted/30"
+                      ? "bg-purple-500/10 border border-purple-500/30"
+                      : "hover:bg-muted/30 border border-transparent"
                   }`}
+                  onClick={() => setStyle(s.value)}
                 >
-                  <p className={`text-sm font-medium ${style === s.value ? "text-purple-400" : ""}`}>
-                    {s.label}
-                  </p>
+                  <p className="text-sm font-medium">{s.label}</p>
                   <p className="text-xs text-muted-foreground">{s.desc}</p>
-                </button>
+                </div>
               ))}
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/50 bg-card/50 backdrop-blur">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Camera className="w-4 h-4 text-purple-400" />
-                How It Works
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-xs text-muted-foreground">
-              <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-[10px] font-bold shrink-0 mt-0.5">1</div>
-                <p><strong className="text-foreground">AI Director</strong> creates a cinematic shot plan with multiple clips</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-[10px] font-bold shrink-0 mt-0.5">2</div>
-                <p><strong className="text-foreground">Keyframe Generator</strong> creates AI images for each clip scene</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-[10px] font-bold shrink-0 mt-0.5">3</div>
-                <p><strong className="text-foreground">Video Renderer</strong> stitches keyframes into MP4 with Ken Burns zoom/pan effects and crossfade transitions</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-[10px] font-bold shrink-0 mt-0.5">4</div>
-                <p><strong className="text-foreground">Cloud Upload</strong> stores the final video for streaming and download</p>
-              </div>
-              <Separator className="my-2" />
-              <p className="text-[11px] italic">Each clip gets its own AI-generated keyframe. The video uses alternating zoom-in and zoom-out Ken Burns effects for cinematic variety.</p>
             </CardContent>
           </Card>
         </div>
@@ -728,158 +791,143 @@ export default function GenerateVideo() {
 
       {/* Generated Videos Gallery */}
       {generatedVideos.length > 0 && (
-        <div className="space-y-4">
+        <>
           <Separator />
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold">Generated Videos</h2>
-              <Badge variant="secondary">{generatedVideos.length}</Badge>
-              {selectedIds.size > 0 && (
-                <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold">Generated Videos</h2>
+                <p className="text-sm text-muted-foreground">
+                  {generatedVideos.length} video(s) generated — select to save
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="border-purple-500/30 text-purple-400">
                   {selectedIds.size} selected
                 </Badge>
-              )}
+                <Button variant="ghost" size="sm" onClick={selectAll}>Select All</Button>
+                <Button variant="ghost" size="sm" onClick={deselectAll}>Deselect All</Button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={selectAll}>
-                Select All
-              </Button>
-              <Button variant="ghost" size="sm" onClick={deselectAll}>
-                Deselect All
-              </Button>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {generatedVideos.map((video: any) => (
-              <motion.div
-                key={video.id}
-                layout
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-              >
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {generatedVideos.map((v: any) => (
                 <Card
+                  key={v.id}
                   className={`border-border/50 bg-card/50 backdrop-blur cursor-pointer transition-all hover:border-purple-500/30 ${
-                    selectedIds.has(video.id) ? "ring-2 ring-purple-500/50 border-purple-500/50" : ""
+                    selectedIds.has(v.id) ? "ring-2 ring-purple-500/50 border-purple-500/30" : ""
                   }`}
-                  onClick={() => toggleSelect(video.id)}
+                  onClick={() => toggleSelect(v.id)}
                 >
-                  {/* Video/Keyframe Preview */}
-                  <div className="relative aspect-video overflow-hidden rounded-t-lg bg-black">
-                    {video.generatedVideoUrl && isVideoUrl(video.generatedVideoUrl) ? (
-                      <video
-                        src={video.generatedVideoUrl}
-                        className="w-full h-full object-cover"
-                        muted
-                        preload="metadata"
-                        onClick={(e) => e.stopPropagation()}
-                        onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
-                        onMouseLeave={(e) => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
-                      />
-                    ) : video.generatedVideoUrl ? (
-                      <img
-                        src={video.generatedVideoUrl}
-                        alt={video.title}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Film className="w-8 h-8 text-muted-foreground" />
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={selectedIds.has(v.id)}
+                          onCheckedChange={() => toggleSelect(v.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div>
+                          <p className="text-sm font-medium line-clamp-1">{v.title}</p>
+                          <p className="text-xs text-muted-foreground">{v.generatedVideoStyle || "Cinematic"}</p>
+                        </div>
                       </div>
-                    )}
-                    <div className="absolute top-2 left-2">
-                      <Checkbox
-                        checked={selectedIds.has(video.id)}
-                        className="bg-background/80 backdrop-blur"
-                        onClick={(e) => e.stopPropagation()}
-                        onCheckedChange={() => toggleSelect(video.id)}
-                      />
-                    </div>
-                    <div className="absolute top-2 right-2 flex items-center gap-1">
-                      {video.generatedVideoSaved && (
-                        <Badge className="bg-green-500/80 text-white text-[10px]">
-                          <CheckCircle2 className="w-3 h-3 mr-1" />
+                      {v.generatedVideoSaved && (
+                        <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">
                           Saved
                         </Badge>
                       )}
-                      {video.generatedVideoUrl && isVideoUrl(video.generatedVideoUrl) && (
-                        <Badge className="bg-purple-500/80 text-white text-[10px]">
-                          <FileVideo className="w-3 h-3 mr-1" />
-                          MP4
+                    </div>
+
+                    {v.generatedVideoUrl && isVideoUrl(v.generatedVideoUrl) ? (
+                      <div className="rounded-lg overflow-hidden border border-border/50 bg-black">
+                        <video
+                          src={v.generatedVideoUrl}
+                          className="w-full h-auto aspect-video object-cover"
+                          muted
+                          preload="metadata"
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                          onMouseLeave={(e) => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
+                        />
+                      </div>
+                    ) : v.generatedVideoUrl ? (
+                      <div className="rounded-lg overflow-hidden border border-border/50">
+                        <img
+                          src={v.generatedVideoUrl}
+                          alt={v.title}
+                          className="w-full h-auto aspect-video object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border/50 bg-muted/20 aspect-video flex items-center justify-center">
+                        <FileVideo className="w-8 h-8 text-muted-foreground/30" />
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      {v.voiceoverUrl && (
+                        <Badge variant="outline" className="text-[10px] border-purple-500/30 text-purple-400">
+                          <Volume2 className="w-2.5 h-2.5 mr-0.5" />
+                          Voiceover
                         </Badge>
                       )}
-                    </div>
-                    <div className="absolute bottom-2 right-2">
-                      <Badge className="bg-black/60 text-white text-[10px]">
-                        <Clock className="w-3 h-3 mr-1" />
-                        {video.generatedVideoDuration || 8}s
+                      <Badge variant="outline" className="text-[10px]">
+                        {v.generatedVideoDuration || 8}s
                       </Badge>
                     </div>
-                  </div>
-                  <CardContent className="pt-3 pb-3">
-                    <p className="text-sm font-medium truncate">{video.title}</p>
-                    <p className="text-xs text-muted-foreground mt-1 truncate">
-                      {video.generatedVideoStyle || "Cinematic"} · {video.generatedVideoDuration || 8}s
-                    </p>
-                    {video.generatedVideoPrompt && (
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                        {video.generatedVideoPrompt}
-                      </p>
-                    )}
-                    {video.generatedVideoUrl && isVideoUrl(video.generatedVideoUrl) && (
+
+                    {v.generatedVideoUrl && (
                       <a
-                        href={video.generatedVideoUrl}
+                        href={v.generatedVideoUrl}
                         download
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 mt-2"
                       >
-                        <Download className="w-3 h-3" />
-                        Download MP4
+                        <Button variant="outline" size="sm" className="w-full text-xs">
+                          <Download className="w-3 h-3 mr-1" />
+                          Download
+                        </Button>
                       </a>
                     )}
                   </CardContent>
                 </Card>
-              </motion.div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Floating Save Bar */}
       <AnimatePresence>
-        {hasUnsavedChanges && generatedVideos.length > 0 && (
+        {hasUnsavedChanges && (
           <motion.div
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 50 }}
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
             className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
           >
-            <Card className="border-purple-500/30 bg-card/95 backdrop-blur shadow-2xl shadow-purple-500/10">
-              <CardContent className="py-3 px-5 flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
-                  <span className="text-sm font-medium">
-                    {selectedIds.size} video{selectedIds.size !== 1 ? "s" : ""} selected
-                  </span>
-                  <span className="text-xs text-muted-foreground">· Unsaved changes</span>
-                </div>
-                <Button
-                  onClick={handleSave}
-                  disabled={saveMutation.isPending}
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
-                  size="sm"
-                >
-                  {saveMutation.isPending ? (
-                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                  ) : (
-                    <Save className="w-3 h-3 mr-1" />
-                  )}
-                  Save Selected
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="flex items-center gap-4 bg-card/95 backdrop-blur-lg border border-purple-500/30 rounded-full px-6 py-3 shadow-2xl shadow-purple-500/10">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                <span className="text-sm font-medium">
+                  {selectedIds.size} video(s) selected
+                </span>
+              </div>
+              <Button
+                onClick={handleSave}
+                disabled={saveMutation.isPending}
+                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-full px-6"
+              >
+                {saveMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
+                Save Selected
+              </Button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
