@@ -27,3 +27,4 @@
 - [x] SEO Optimizer: allow user to save all SEO results (title, description, tags, score, suggestions)
 - [x] Niche Finder: allow user to select and save niche cards to the database
 - [x] Content Research: allow user to multi-select and save content idea cards to the database
+- [x] Script Writer: allow user to multi-select and save script cards to the database

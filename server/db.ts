@@ -122,6 +122,16 @@ export async function deleteVideo(id: number, userId: number) {
   await db.delete(videos).where(and(eq(videos.id, id), eq(videos.userId, userId)));
 }
 
+export async function saveSelectedScripts(ids: number[], userId: number) {
+  const db = await getDb(); if (!db) return;
+  // Deselect all scripts first
+  await db.update(videos).set({ scriptSaved: false }).where(eq(videos.userId, userId));
+  // Select the specified ones
+  for (const id of ids) {
+    await db.update(videos).set({ scriptSaved: true }).where(and(eq(videos.id, id), eq(videos.userId, userId)));
+  }
+}
+
 export async function getVideoStats(userId: number) {
   const db = await getDb(); if (!db) return { total: 0, byStatus: {} };
   const all = await db.select().from(videos).where(eq(videos.userId, userId));

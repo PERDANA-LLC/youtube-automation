@@ -380,6 +380,21 @@ export const appRouter = router({
         return parsed;
       }),
 
+    saveSelectedScripts: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ ctx, input }) => {
+        await db.saveSelectedScripts(input.ids, ctx.user.id);
+
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: "scripts_saved",
+          entityType: "video",
+          details: `Saved ${input.ids.length} selected script(s)`,
+        });
+
+        return { success: true, count: input.ids.length };
+      }),
+
     // SEO Optimizer
     optimizeSEO: protectedProcedure
       .input(z.object({

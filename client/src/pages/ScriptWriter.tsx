@@ -4,12 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { FileText, Sparkles, Loader2, Copy, Check } from "lucide-react";
-import { useState } from "react";
+import { FileText, Sparkles, Loader2, Copy, Check, Save, CheckCircle2, X, Star, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function ScriptWriter() {
   const [topic, setTopic] = useState("");
@@ -21,8 +23,25 @@ export default function ScriptWriter() {
   const [result, setResult] = useState<any>(null);
   const [copied, setCopied] = useState(false);
 
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+
   const { data: videos } = trpc.video.list.useQuery();
   const utils = trpc.useUtils();
+
+  // Videos that have scripts
+  const videosWithScripts = videos?.filter(v => v.scriptContent) ?? [];
+
+  // Initialize selectedIds from existing saved selections
+  useEffect(() => {
+    if (videos) {
+      const saved = new Set(videos.filter(v => v.scriptSaved).map(v => v.id));
+      setSelectedIds(saved);
+      setHasUnsavedChanges(false);
+    }
+  }, [videos]);
 
   const generateMutation = trpc.video.generateScript.useMutation({
     onSuccess: (data) => {
@@ -30,6 +49,16 @@ export default function ScriptWriter() {
       utils.video.list.invalidate();
       utils.audit.list.invalidate();
       toast.success("Script generated!");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const saveMutation = trpc.video.saveSelectedScripts.useMutation({
+    onSuccess: (data) => {
+      setHasUnsavedChanges(false);
+      utils.video.list.invalidate();
+      utils.audit.list.invalidate();
+      toast.success(`Saved ${data.count} selected script(s)!`);
     },
     onError: (err) => toast.error(err.message),
   });
@@ -48,13 +77,62 @@ export default function ScriptWriter() {
     }
   };
 
+  const handleCopyScript = (scriptContent: string) => {
+    navigator.clipboard.writeText(scriptContent);
+    toast.success("Script copied to clipboard!");
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setHasUnsavedChanges(true);
+  };
+
+  const toggleExpand = (id: number) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(videosWithScripts.map(v => v.id)));
+    setHasUnsavedChanges(true);
+  };
+
+  const deselectAll = () => {
+    setSelectedIds(new Set());
+    setHasUnsavedChanges(true);
+  };
+
+  const handleSaveSelected = () => {
+    saveMutation.mutate({ ids: Array.from(selectedIds) });
+  };
+
+  const selectedCount = selectedIds.size;
+  const totalCount = videosWithScripts.length;
+  const allSelected = totalCount > 0 && selectedCount === totalCount;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">AI Script Writer</h1>
         <p className="text-muted-foreground text-sm mt-1">Generate engaging video scripts with hooks, storytelling, and CTAs</p>
       </div>
 
+      {/* Script Generation Form */}
       <div className="grid md:grid-cols-2 gap-6">
         <Card className="glass-card glow-border">
           <CardContent className="p-6 space-y-4">
@@ -103,6 +181,7 @@ export default function ScriptWriter() {
           </CardContent>
         </Card>
 
+        {/* Live Result Preview */}
         <Card className="glass-card">
           <CardContent className="p-6">
             {result ? (
@@ -148,6 +227,145 @@ export default function ScriptWriter() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Saved Scripts Section */}
+      {videosWithScripts.length > 0 && (
+        <>
+          <div className="flex items-center justify-between pt-4 border-t border-border/50">
+            <div>
+              <h2 className="text-lg font-semibold">Generated Scripts</h2>
+              <p className="text-muted-foreground text-xs mt-0.5">
+                Select scripts to save and manage your collection
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge variant="outline" className="text-xs">
+                {selectedCount}/{totalCount} selected
+              </Badge>
+              <Button variant="outline" size="sm" onClick={allSelected ? deselectAll : selectAll} className="text-xs">
+                {allSelected ? (
+                  <><X className="h-3 w-3 mr-1.5" /> Deselect All</>
+                ) : (
+                  <><CheckCircle2 className="h-3 w-3 mr-1.5" /> Select All</>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            {videosWithScripts.map((video) => {
+              const isChecked = selectedIds.has(video.id);
+              const isExpanded = expandedIds.has(video.id);
+              return (
+                <Card
+                  key={video.id}
+                  className={`glass-card transition-all ${
+                    isChecked
+                      ? 'border-primary/50 glow-border bg-primary/[0.02]'
+                      : 'hover:border-primary/20'
+                  }`}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      {/* Checkbox */}
+                      <div className="pt-0.5 shrink-0">
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => toggleSelect(video.id)}
+                          className="h-5 w-5"
+                        />
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <h3 className="font-semibold text-sm truncate">{video.title}</h3>
+                          {isChecked && <Star className="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          <Badge variant="secondary" className="text-[10px]">{video.scriptWordCount} words</Badge>
+                          <Badge variant="outline" className="text-[10px] capitalize">{video.videoType}</Badge>
+                          <Badge variant="outline" className="text-[10px] capitalize bg-blue-500/5 text-blue-400 border-blue-500/20">{video.status}</Badge>
+                        </div>
+
+                        {/* Expandable Script Preview */}
+                        <div
+                          className={`text-xs text-muted-foreground overflow-hidden transition-all duration-300 ${
+                            isExpanded ? 'max-h-[500px]' : 'max-h-[60px]'
+                          }`}
+                        >
+                          <div className={`prose prose-invert prose-xs ${isExpanded ? '' : 'line-clamp-3'}`}>
+                            <Streamdown>{video.scriptContent || ''}</Streamdown>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex gap-1 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                          onClick={() => toggleExpand(video.id)}
+                        >
+                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => handleCopyScript(video.scriptContent || '')}
+                        >
+                          <Copy className="h-3 w-3 mr-1" /> Copy
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Floating Save Bar */}
+      <AnimatePresence>
+        {totalCount > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
+          >
+            <Card className="glass-card border-primary/30 shadow-2xl shadow-primary/10">
+              <CardContent className="px-6 py-3 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={`h-2.5 w-2.5 rounded-full ${hasUnsavedChanges ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`} />
+                  <span className="text-sm font-medium whitespace-nowrap">
+                    {selectedCount} script{selectedCount !== 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="h-6 w-px bg-border" />
+                <Button
+                  size="sm"
+                  onClick={handleSaveSelected}
+                  disabled={saveMutation.isPending || !hasUnsavedChanges}
+                  className="whitespace-nowrap"
+                >
+                  {saveMutation.isPending ? (
+                    <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Saving...</>
+                  ) : !hasUnsavedChanges ? (
+                    <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Saved</>
+                  ) : (
+                    <><Save className="h-3.5 w-3.5 mr-1.5" /> Save Selected</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
