@@ -53,6 +53,7 @@ export const videos = mysqlTable("videos", {
   voiceoverSaved: boolean("voiceoverSaved").default(false),
   thumbnailUrl: varchar("thumbnailUrl", { length: 1000 }),
   thumbnailPrompt: text("thumbnailPrompt"),
+  thumbnailSaved: boolean("thumbnailSaved").default(false),
   seoTitle: varchar("seoTitle", { length: 500 }),
   seoDescription: text("seoDescription"),
   seoTags: json("seoTags"),

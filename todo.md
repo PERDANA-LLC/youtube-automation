@@ -29,3 +29,4 @@
 - [x] Content Research: allow user to multi-select and save content idea cards to the database
 - [x] Script Writer: allow user to multi-select and save script cards to the database
 - [x] Voiceover: allow user to multi-select and save voiceover cards to the database
+- [x] Thumbnails: allow user to multi-select and save thumbnail cards to the database
